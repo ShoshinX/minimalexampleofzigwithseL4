@@ -15,8 +15,7 @@ extern var _cpio_archive: []u8;
 extern var _cpio_archive_end: []u8;
 
 pub fn panic(msg: []const u8, error_return_trace: ?*builtin.StackTrace) noreturn {
-    _ = c.printf("DIED LMAO!\n");
-    _ = c.printf("%s\n", &msg);
+    _ = serial.writer().print("err msg: {s}\n", .{msg}) catch unreachable;
     _ = c.printf("address impacted: %u\n", error_return_trace);
     const size: u64 = @ptrToInt(&_cpio_archive_end) - @ptrToInt(&_cpio_archive);
     _ = c.printf("CPIO_ARCHIVE ADDRESS: %d\n", size);
@@ -31,7 +30,7 @@ pub fn panic(msg: []const u8, error_return_trace: ?*builtin.StackTrace) noreturn
         };
     }
     //}
-    _ = serial.writeText("YOURMUM\n") catch unreachable;
+    _ = serial.writeText("panice() triggers\n") catch unreachable;
 
     const first_trace_addr = @returnAddress();
     var it = std.debug.StackIterator.init(first_trace_addr, null);
@@ -222,9 +221,9 @@ export fn main() i64 {
     err = fail_allocate_resources(free_slot) catch 1;
     if (err != 0) _ = c.printf("Failed allocating resources \n");
 
-    const allrights = .{ .caprights = c.seL4_AllRights, .dummy = .{0} ** 3 };
-    const res = c.zig_seL4_CNode_Copy(c.seL4_CapInitThreadCNode, free_slot, c.seL4_WordBits, c.seL4_CapInitThreadCNode, c.seL4_CapInitThreadTCB, c.seL4_WordBits, allrights);
-    if (res != c.seL4_NoError) _ = c.printf("Can't copy: %u\n", res);
+    //const allrights = .{ .caprights = c.seL4_AllRights, .dummy = .{0} ** 3 };
+    //const res = c.zig_seL4_CNode_Copy(c.seL4_CapInitThreadCNode, free_slot, c.seL4_WordBits, c.seL4_CapInitThreadCNode, c.seL4_CapInitThreadTCB, c.seL4_WordBits, allrights);
+    //if (res != c.seL4_NoError) _ = c.printf("Can't copy: %u\n", res);
 
     // Use bufferoverread or bufferoverflow crash example
     var len: u32 = 11;
