@@ -37,17 +37,46 @@ add_custom_target(main_custom
     -target x86_64-freestanding 
     -femit-bin=${PROJECT_BINARY_DIR}/zig-lib.a "${PROJECT_SOURCE_DIR}/src/zig_helper.zig" 
     -O ReleaseSafe
-    #-T${PROJECT_SOURCE_DIR}/src/zig_debug_symbols.lds
     -fcompiler-rt
     COMMAND_EXPAND_LISTS
     )
 include(cpio)
-#MakeCPIO(archive.o ${PROJECT_SOURCE_DIR}/src/main.c)
-MakeCPIO(archive.o ${PROJECT_BINARY_DIR}/images/hello-world-image)
+MakeCPIO(archive.o ${PROJECT_SOURCE_DIR}/src/main.c)
+#MakeCPIO(archive.o ${PROJECT_BINARY_DIR}/images/hello-world-image)
 
 # Name the executable and list source files required to build it
 # TODO: rename from src/main.c to a doNothing since this is used to establish the target and the zig generated object is in target_link_libraries()
-add_executable(hello-world src/main.c archive.o)
+add_executable(elf-info src/main.c archive.o)
+add_dependencies(elf-info main_custom)
+target_link_libraries(elf-info
+    sel4runtime sel4
+    muslc utils sel4tutorials
+    sel4muslcsys sel4platsupport sel4utils sel4debug 
+    ${PROJECT_BINARY_DIR}/zig-lib.a
+    sel4keyboard
+    zig_seL4_wrapper
+    platsupport
+    )
+set_property(
+        TARGET elf-info
+        APPEND_STRING
+        PROPERTY LINK_FLAGS " -Wl,-u_sel4_start -Wl,-e_sel4_start "
+    )
+find_file(
+    TLS_ROOTSERVER tls_rootserver.lds
+    PATHS "${CMAKE_CURRENT_LIST_DIR}"
+    CMAKE_FIND_ROOT_PATH_BOTH
+)
+mark_as_advanced(TLS_ROOTSERVER)
+set_property(
+        TARGET elf-info
+        APPEND_STRING
+        PROPERTY LINK_FLAGS " -Wl,-T ${TLS_ROOTSERVER} "
+    )
+
+MakeCPIO(archive-elf.o $<TARGET_FILE:elf-info>)
+
+add_executable(hello-world src/main.c archive-elf.o)
 add_dependencies(hello-world main_custom)
 #set_property(
 #        TARGET hello-world

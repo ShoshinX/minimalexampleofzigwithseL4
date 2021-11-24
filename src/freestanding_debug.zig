@@ -1,4 +1,5 @@
 const std = @import("std");
+//const DW = @import("self_dwarf.zig");
 const DW = std.dwarf;
 const debug = std.debug;
 const TTY = debug.TTY;
@@ -6,6 +7,7 @@ const serial = @import("serial.zig");
 
 pub fn printSourceAtAddress(debug_info: *DW.DwarfInfo, out_stream: anytype, address: usize, tty_config: TTY.Config, comptime printLineFromMappedFile: anytype) !void {
     const symbol_info = try getSymbolFromDwarf(address, debug_info);
+    // symbol_info.line_info is the problem
     return printLineInfo(out_stream, symbol_info.line_info, address, symbol_info.symbol_name, symbol_info.compile_unit_name, tty_config, printLineFromMappedFile);
 }
 
@@ -35,6 +37,7 @@ fn printLineInfo(
         try out_stream.writeAll("\n");
 
         // Show the matching source code line if possible
+        // Error is line_info being null
         if (line_info) |li| {
             if (printLineFromFile(out_stream, li)) {
                 if (li.column > 0) {

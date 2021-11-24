@@ -7,20 +7,28 @@ const io = std.io;
 const fstddbg = @import("freestanding_debug.zig");
 const serial = @import("serial.zig");
 const c = @import("cImports.zig");
-const dwarf = @import("self_dwarf.zig");
+const seL4_api = @import("seL4_wrapper.zig");
+const dwarf = std.dwarf;
+//const dwarf = @import("self_dwarf.zig");
 
 var io_port_cap: c.seL4_CPtr = 0;
 
+// source files to include for debugging
+const source_files = [_][]const u8{
+    "zig_helper.zig",
+    "freestanding_debug.zig",
+    "serial.zig",
+    "seL4_wrapper.zig",
+};
 extern var _cpio_archive: []u8;
 extern var _cpio_archive_end: []u8;
 
 pub fn panic(msg: []const u8, error_return_trace: ?*builtin.StackTrace) noreturn {
     _ = serial.writer().print("err msg: {s}\n", .{msg}) catch unreachable;
-    _ = c.printf("address impacted: %u\n", error_return_trace);
+    _ = error_return_trace;
     const size: u64 = @ptrToInt(&_cpio_archive_end) - @ptrToInt(&_cpio_archive);
-    _ = c.printf("CPIO_ARCHIVE ADDRESS: %d\n", size);
     var elf_size: u64 = 0;
-    const file: ?*const c_void = c.cpio_get_file(&_cpio_archive, size, "hello-world-image", &elf_size);
+    const file: ?*const c_void = c.cpio_get_file(&_cpio_archive, size, "elf-info", &elf_size);
     if (file == null) _ = c.printf("file is null\n");
     var debugInfo: dwarf.DwarfInfo = undefined;
     if (file) |value| {
@@ -29,14 +37,15 @@ pub fn panic(msg: []const u8, error_return_trace: ?*builtin.StackTrace) noreturn
             hang();
         };
     }
-    //}
-    _ = serial.writeText("panice() triggers\n") catch unreachable;
+    //_ = serial.writeText("TRIGGERED: panic()\n") catch unreachable;
 
     const first_trace_addr = @returnAddress();
     var it = std.debug.StackIterator.init(first_trace_addr, null);
+    //var num: u32 = 0;
     while (it.next()) |return_address| {
-        fstddbg.printSourceAtAddress(@ptrCast(*std.dwarf.DwarfInfo, &debugInfo), serial.writer(), return_address, .no_color, printLineFromMappedFile) catch hang();
+        fstddbg.printSourceAtAddress(&debugInfo, serial.writer(), return_address, .no_color, printLineFromMappedFile) catch |err| (serial.writer().print("FAIL: printSourceAtAddress() {s}\n", .{@errorName(err)}) catch unreachable);
     }
+    _ = serial.writer().print("Panic message finished.\n", .{}) catch unreachable;
 
     while (true) {}
 }
@@ -50,8 +59,6 @@ fn chopSlice(ptr: [*]align(8) const u8, offset: u64, size: u64) ![]const u8 {
     const end = start + try math.cast(usize, size);
     return ptr[start..end];
 }
-
-const source_files = [_][]const u8{ "zig_helper.zig", "freestanding_debug.zig", "serial.zig" };
 
 fn printLineFromMappedFile(out_stream: anytype, line_info: std.debug.LineInfo) anyerror!void {
     inline for (source_files) |src_path| {
@@ -84,7 +91,7 @@ fn printLineFromBuffer(out_stream: anytype, contents: []const u8, line_info: std
     return error.EndOfFile;
 }
 
-var kernel_panic_allocator_bytes: [4096 * 1024]u8 = undefined;
+var kernel_panic_allocator_bytes: [8192 * 1024]u8 = undefined;
 var kernel_panic_allocator_state = std.heap.FixedBufferAllocator.init(kernel_panic_allocator_bytes[0..]);
 const allocator = &kernel_panic_allocator_state.allocator;
 
@@ -139,92 +146,27 @@ fn returnDebugInfoFromMappedELF(mapped_elf: *const c_void) !dwarf.DwarfInfo {
         .debug_ranges = opt_debug_ranges,
     };
     try dwarf.openDwarfDebugInfo(&di, allocator);
+    _ = try serial.writer().print("SUCCESS: returnDebugInfoFromMappedELF\n", .{});
     return di;
 }
 
-//extern var __debug_info_start: u8;
-//extern var __debug_info_end: u8;
-//extern var __debug_abbrev_start: u8;
-//extern var __debug_abbrev_end: u8;
-//extern var __debug_str_start: u8;
-//extern var __debug_str_end: u8;
-//extern var __debug_line_start: u8;
-//extern var __debug_line_end: u8;
-//extern var __debug_ranges_start: u8;
-//extern var __debug_ranges_end: u8;
-//fn getSelfDebugInfo() !*dwarf.DwarfInfo {
-//    const debug_mem_size = @ptrToInt(&__debug_ranges_end) - @ptrToInt(&__debug_info_start);
-//    const debug_mem = @ptrCast([*]const u8, &__debug_info_start)[0..debug_mem_size];
-//    const debug_mem_start = @ptrToInt(&__debug_info_start);
-//    _ = try serial.writer().print("Debug_mem length: {}\n", .{debug_mem.len});
-//
-//    const info_offset = @ptrToInt(&__debug_info_start) - debug_mem_start;
-//    const info_size = @ptrToInt(&__debug_info_end) - @ptrToInt(&__debug_info_start);
-//
-//    const abbrev_offset = @ptrToInt(&__debug_abbrev_start) - debug_mem_start;
-//    const abbrev_size = @ptrToInt(&__debug_abbrev_end) - @ptrToInt(&__debug_abbrev_start);
-//
-//    const str_offset = @ptrToInt(&__debug_str_start) - debug_mem_start;
-//    const str_size = @ptrToInt(&__debug_str_end) - @ptrToInt(&__debug_str_start);
-//
-//    const line_offset = @ptrToInt(&__debug_line_start) - debug_mem_start;
-//    const line_size = @ptrToInt(&__debug_line_end) - @ptrToInt(&__debug_line_start);
-//
-//    const ranges_offset = @ptrToInt(&__debug_ranges_start) - debug_mem_start;
-//    const ranges_size = @ptrToInt(&__debug_ranges_end) - @ptrToInt(&__debug_ranges_start);
-//
-//    var di: dwarf.DwarfInfo = dwarf.DwarfInfo{
-//        .endian = builtin.Endian.Little,
-//        .debug_info = try chopSlice(debug_mem, info_offset, info_size),
-//        .debug_abbrev = try chopSlice(debug_mem, abbrev_offset, abbrev_size),
-//        .debug_str = try chopSlice(debug_mem, str_offset, str_size),
-//        .debug_line = try chopSlice(debug_mem, line_offset, line_size),
-//        .debug_ranges = try chopSlice(debug_mem, ranges_offset, ranges_size),
-//    };
-//    _ = try serial.writer().print("Debug_mem_address: {} {}\n", .{ @ptrToInt(&__debug_info_start), @ptrToInt(&(debug_mem[0..3])[0]) });
-//    _ = try serial.writer().print("Debug_info length: {} {}\n", .{ info_size, di.debug_info.len });
-//    _ = try serial.writer().print("Debug_abbrev length: {} {}\n", .{ abbrev_size, di.debug_abbrev.len });
-//    _ = try serial.writer().print("Debug_str length: {} {}\n", .{ str_size, di.debug_str.len });
-//    _ = try serial.writer().print("Debug_line length: {} {}\n", .{ line_size, di.debug_line.len });
-//    _ = try serial.writer().print("Debug_ranges length: {} {}\n", .{ ranges_size, di.debug_ranges.?.len });
-//    var stream = io.fixedBufferStream(di.debug_abbrev);
-//    const in = &stream.reader();
-//    const byte = in.readByte();
-//    _ = try serial.writer().print("Byte read: {}\n", .{byte});
-//    try dwarf.openDwarfDebugInfo(&di, allocator);
-//    return &di;
-//}
-
 export fn main() i64 {
+    const res = main_continued() catch unreachable;
+    return res;
+}
+
+fn main_continued() !i64 {
     const info = c.platsupport_get_bootinfo();
-    var err: c.seL4_Error = undefined;
-    // Setup keyboard
     io_port_cap = info.*.empty.start;
+    // Setup keyboard
     _ = serial.init() catch unreachable;
-    //_ = serial.writer().print("RESULT {}\n", .{@ptrToInt(&__debug_info_end) - @ptrToInt(&__debug_info_start)}) catch unreachable;
-    // _ = serial.writer().print("DEBUG POINTERS:\n {}\n {}\n {}\n {}\n {}\n {}\n {}\n {}\n {}\n {} \n", .{
-    //     @ptrToInt(&__debug_info_start),
-    //     @ptrToInt(&__debug_info_end),
-    //     @ptrToInt(&__debug_abbrev_start),
-    //     @ptrToInt(&__debug_abbrev_end),
-    //     @ptrToInt(&__debug_str_start),
-    //     @ptrToInt(&__debug_str_end),
-    //     @ptrToInt(&__debug_line_start),
-    //     @ptrToInt(&__debug_line_end),
-    //     @ptrToInt(&__debug_ranges_start),
-    //     @ptrToInt(&__debug_ranges_end),
-    // }) catch unreachable;
-    // Show errors as first class values:
     // Use defer: de-/allocating resource that lasts until the end of the scope
     // Use errdefer: de-/allocating resources that last longer than the scope
     const free_slot = io_port_cap + 1;
-    err = fail_allocate_resources(free_slot) catch 1;
-    if (err != 0) _ = c.printf("Failed allocating resources \n");
+    fail_allocate_resources(free_slot) catch unreachable;
 
-    //const allrights = .{ .caprights = c.seL4_AllRights, .dummy = .{0} ** 3 };
-    //const res = c.zig_seL4_CNode_Copy(c.seL4_CapInitThreadCNode, free_slot, c.seL4_WordBits, c.seL4_CapInitThreadCNode, c.seL4_CapInitThreadTCB, c.seL4_WordBits, allrights);
-    //if (res != c.seL4_NoError) _ = c.printf("Can't copy: %u\n", res);
-
+    //var eg: ?u32 = null;
+    //_ = eg.?;
     // Use bufferoverread or bufferoverflow crash example
     var len: u32 = 11;
     var buffer: [10]u8 = .{0} ** 10;
@@ -244,59 +186,7 @@ fn do_buffer_overread(len: usize, buffer: []u8, dest: []u8) void {
 
 // I want to init a server with its cap and the IOPortCOntrol issue fails so there's a rollback.
 // Allocate twice, ensuring it fails the second time.
-fn fail_allocate_resources(cap_slot: c.seL4_Word) !c.seL4_Error {
-    // allocate caps
-    const allrights = .{ .caprights = c.seL4_AllRights, .dummy = .{0} ** 3 };
-    _ = c.zig_seL4_CNode_Copy(c.seL4_CapInitThreadCNode, cap_slot, c.seL4_WordBits, c.seL4_CapInitThreadCNode, c.seL4_CapInitThreadTCB, c.seL4_WordBits, allrights);
-    errdefer {
-        const res = c.zig_seL4_CNode_Delete(c.seL4_CapInitThreadCNode, cap_slot, c.seL4_WordBits);
-        _ = c.printf("Errdefer: %d\n", res);
-    }
-
-    // return error with the IOPortControl_Issue
-    var err: c.seL4_Error = try X86_IOPort_Control_Issue(cap_slot);
-    return err;
-}
-
-const seL4Errors = error{
-    InvalidArgument,
-    InvalidCapability,
-    IllegalOperation,
-    RangeError,
-    AlignmentError,
-    FailedLookup,
-    TruncatedMessage,
-    DeleteFirst,
-    RevokeFirst,
-    NotEnoughMemory,
-};
-// Errors as first class in zig
-// TODO: write wrapper for future work to add errors
-fn X86_IOPort_Control_Issue(port_cap: c.seL4_Word) !c.seL4_Error {
-    var res: c.seL4_Error = c.seL4_NoError;
-    res = c.zig_seL4_X86_IOPortControl_Issue(c.seL4_CapIOPortControl, 0x3f8, 0x3ff, c.seL4_CapInitThreadCNode, port_cap, c.seL4_WordBits);
-    return return_seL4_Error(res);
-}
-
-fn return_seL4_Error(err: c.seL4_Error) !c.seL4_Error {
-    if (err == c.seL4_InvalidArgument) return seL4Errors.InvalidArgument;
-    if (err == c.seL4_InvalidCapability) return seL4Errors.InvalidCapability;
-    if (err == c.seL4_IllegalOperation) return seL4Errors.IllegalOperation;
-    if (err == c.seL4_RangeError) return seL4Errors.RangeError;
-    if (err == c.seL4_AlignmentError) return seL4Errors.AlignmentError;
-    if (err == c.seL4_FailedLookup) return seL4Errors.FailedLookup;
-    if (err == c.seL4_TruncatedMessage) return seL4Errors.TruncatedMessage;
-    if (err == c.seL4_DeleteFirst) return seL4Errors.DeleteFirst;
-    if (err == c.seL4_RevokeFirst) return seL4Errors.RevokeFirst;
-    if (err == c.seL4_NotEnoughMemory) return seL4Errors.NotEnoughMemory;
-    return c.seL4_NoError;
-}
-
-// Write the 2 callback functions
-fn in8(port: u16) callconv(.C) u8 {
-    return c.zig_seL4_X86_IOPort_In8(io_port_cap, port).result;
-}
-
-fn out8(port: u16, value: u8) callconv(.C) void {
-    _ = c.zig_seL4_X86_IOPort_Out8(io_port_cap, port, value);
+fn fail_allocate_resources(cap_slot: c.seL4_Word) !void {
+    _ = cap_slot;
+    try seL4_api.TCB_Resume(200);
 }

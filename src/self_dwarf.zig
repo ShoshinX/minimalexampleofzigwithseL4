@@ -423,18 +423,26 @@ pub const DwarfInfo = struct {
             //_ = try serial.writer().print("version: {}\n", .{version});
 
             // DEBUG: debug_abbrev_offset makes getAbbrevTable seek to the end of .debug_abbrev[]
-            const debug_abbrev_offset = if (is_64) try in.readInt(u64, di.endian) else try in.readInt(u32, di.endian);
-            //_ = try serial.writer().print("debug_abbrev_offset: {} {}\n", .{ debug_abbrev_offset, is_64 });
+            var debug_abbrev_offset = if (is_64) try in.readInt(u64, di.endian) else try in.readInt(u32, di.endian);
+            // GNU LD thinks that debug_abbrev section starts from 0
+            // obtain the abbrev offset
+            debug_abbrev_offset = debug_abbrev_offset - @ptrToInt(&di.debug_abbrev[0]);
+            //_ = try serial.writer().print("debug_abbrev_offset: {}\n", .{debug_abbrev_offset});
 
             const address_size = try in.readByte();
             if (address_size != @sizeOf(usize)) return error.InvalidDebugInfo;
             //_ = try serial.writer().print("address_size: {}\n", .{address_size});
 
             const compile_unit_pos = try seekable.getPos();
+            //_ = try serial.writer().print("compile_unit_pos: {}\n", .{compile_unit_pos});
             // DEBUG: the abbreviation table here returns EndOfStream
             const abbrev_table = try di.getAbbrevTable(debug_abbrev_offset);
 
+            //_ = try serial.writer().print("Passes: getAbbrevTable()\n", .{});
+
             try seekable.seekTo(compile_unit_pos);
+
+            //_ = try serial.writer().print("compile_unit_pos {}\n", .{compile_unit_pos});
 
             const next_unit_pos = this_unit_offset + next_offset;
 
@@ -530,7 +538,9 @@ pub const DwarfInfo = struct {
             const version = try in.readInt(u16, di.endian);
             if (version < 2 or version > 5) return error.InvalidDebugInfo;
 
-            const debug_abbrev_offset = if (is_64) try in.readInt(u64, di.endian) else try in.readInt(u32, di.endian);
+            var debug_abbrev_offset = if (is_64) try in.readInt(u64, di.endian) else try in.readInt(u32, di.endian);
+            // GNU LD linker offsets debug_abbrev to 0 instead of the address of debug_abbrev section in the ELF file
+            debug_abbrev_offset = debug_abbrev_offset - @ptrToInt(&di.debug_abbrev[0]);
 
             const address_size = try in.readByte();
             if (address_size != @sizeOf(usize)) return error.InvalidDebugInfo;
@@ -599,12 +609,15 @@ pub const DwarfInfo = struct {
                         error.MissingDebugInfo => 0,
                         else => return err,
                     };
-
-                    try seekable.seekTo(ranges_offset);
+                    // GNU LD offsets to 0 instead of debug_ranges section address
+                    const actual_ranges_offset = ranges_offset - @ptrToInt(&di.debug_ranges.?[0]);
+                    _ = try serial.writer().print("VALUE: ranges_offset {}, actual {}, base_address {x}\n", .{ ranges_offset, actual_ranges_offset, base_address });
+                    try seekable.seekTo(actual_ranges_offset);
 
                     while (true) {
                         const begin_addr = try in.readInt(usize, di.endian);
                         const end_addr = try in.readInt(usize, di.endian);
+                        _ = try serial.writer().print("VALUE: begin {}, end {}\n", .{ begin_addr, end_addr });
                         if (begin_addr == 0 and end_addr == 0) {
                             break;
                         }
@@ -703,6 +716,7 @@ pub const DwarfInfo = struct {
         const compile_unit_cwd = try compile_unit.die.getAttrString(di, AT_comp_dir);
         const line_info_offset = try compile_unit.die.getAttrSecOffset(AT_stmt_list);
 
+        _ = try serial.writer().print("line_offset: {} {}\n", .{ line_info_offset, @ptrToInt(&di.debug_line[0]) });
         try seekable.seekTo(line_info_offset);
 
         var is_64: bool = undefined;
@@ -866,10 +880,16 @@ pub const DwarfInfo = struct {
     }
 
     fn getString(di: *DwarfInfo, offset: u64) ![]const u8 {
-        if (offset > di.debug_str.len)
+        // GNU LD offsets from 0 which is the beginning of the ELF file instead of offsetting from debug_str address
+        const actual_offset = offset - @ptrToInt(&di.debug_str[0]);
+        // DEBUG:
+        // _ = try serial.writer().print("Run: getString, offset: {}, actual_offset: {}\n", .{ offset, actual_offset });
+        if (actual_offset > di.debug_str.len)
             return error.InvalidDebugInfo;
-        const casted_offset = math.cast(usize, offset) catch
+        const casted_offset = math.cast(usize, actual_offset) catch
             return error.InvalidDebugInfo;
+        // DEBUG:
+        // _ = try serial.writer().print("Passes: getString\n", .{});
 
         // Valid strings always have a terminating zero byte
         if (mem.indexOfScalarPos(u8, di.debug_str, casted_offset, 0)) |last| {
@@ -890,7 +910,9 @@ pub fn openDwarfDebugInfo(di: *DwarfInfo, allocator: *mem.Allocator) !void {
     di.func_list = ArrayList(Func).init(allocator);
     //_ = try serial.writer().print("WORKS HERE\n", .{});
     try di.scanAllFunctions();
+    _ = try serial.writer().print("Passes: scanAllFunctions()\n", .{});
     try di.scanAllCompileUnits();
+    _ = try serial.writer().print("Passes: scanAllCompileUnits()\n", .{});
 }
 
 pub const TAG_padding = 0x00;
